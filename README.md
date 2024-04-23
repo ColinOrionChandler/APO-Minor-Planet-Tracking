@@ -37,7 +37,7 @@ Disclaimer:
 
 How to acknowledge use:
 
-- If you use this code, please add the following text: This research used APO Minor Planet Tracking by Colin Orion Chandler.
+- If you use this code, please add the following text: "This research used APO Minor Planet Tracking by Colin Orion Chandler."
 
 - Please also cite Giorgini 1996 for JPL Horizons, and astropy as appropriate.
 
