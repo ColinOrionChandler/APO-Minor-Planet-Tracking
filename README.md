@@ -10,14 +10,14 @@ Example:
 
 python apo_minor_planet_tracking.py "Chandler"
 
-This will provide a command that (1) slews the telescope to asteroid "Chandler," (2) starts tracking at asteroid Chandler's rate of motion on the sky (so stars are trailed, not the asteroid), and (3) sets the FITS header to have the name "Chandler" in it. The output will look something like this:
+This will provide a command that (1) slews the telescope to asteroid "Chandler," (2) starts tracking at asteroid Chandler's rate of motion on the sky (so stars are trailed, not the asteroid), and (3) sets the FITS header to have the name "Chandler" in it. The single-line output will look something like this:
 
 tcc track 270.168133497, -22.53122276, 2.8419421296296294e-07, -7.75733024691358e-08 Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="Chandler"
 
 
 Tips:
 
-Paste the command into the window that appears when activating "Run_Commands" from the "Scripts" menu.
+- Paste the command into the window that appears when activating "Run_Commands" from the "Scripts" menu.
 
 - Apply any desired offsets using TUI after the slew is done. (Do not add offsets via this Python program.)
 
