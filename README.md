@@ -1,6 +1,6 @@
 # APO Minor Planet Tracking
 
-A tool for generating a Telescope Control Software (TCS) command to track a specified minor planet.
+A tool for generating a Telescope Control Console (TCC) command to track a specified minor planet (e.g., asteroids, comets).
 
 This program is specifically designed for the Apache Point Observatory (APO) 3.5-meter Astrophysical Research Consortium (ARC) Telescope User Interface (TUI). APO website: https://www.apo.nmsu.edu/
 
@@ -26,3 +26,17 @@ Tips:
 - For nearby objects, it may be necessary to re-run this program to get updated rates, even if you manually offset the telescope to keep the object in the field of view (FOV).
 
 - Some objects for JPL Horizons have multiple matching names. For example, Didymos has multiple entries (as of 2024 April 2), so typing "Didymos (primary body)" will let the program run.
+
+
+Disclaimer:
+
+- You should do a reality check before executing any tcc command.
+
+- The program author makes no warranty, implied or otherise.
+
+
+Acknowledgements:
+
+- If you use this code, please add the following text: This research used APO Minor Planet Tracker by Colin Orion Chandler.
+
+- Please also cite Giorgini 1996 for JPL Horizons, and astropy as appropriate.
