@@ -1,6 +1,6 @@
 # APO Minor Planet Tracking
 
-A simple tool for generating a Telescope Control Console (TCC) command to track a specified minor planet (e.g., asteroids, comets). Written by Colin Orion Chandler (University of Washington, LINCC Frameworks, DiRAC Institute).
+A simple tool for generating a Telescope Control Console (TCC) command to track a specified minor planet (e.g., asteroids, comets). Written by Colin Orion Chandler (University of Washington, LINCC Frameworks, DiRAC Institute, Northern Arizona University).
 
 This program is specifically designed for the Apache Point Observatory (APO) 3.5-meter Astrophysical Research Consortium (ARC) Telescope User Interface (TUI). APO website: https://www.apo.nmsu.edu/
 
