@@ -45,7 +45,7 @@ def getCommandViaJPL(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 	from astroquery.jplhorizons import Horizons
 	import datetime
 	if ut == None:
-		dt = datetime.datetime.now() + datetime.timedelta(seconds=timedelta_s)
+		dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=timedelta_s)
 		ut = f'{dt.year}-{str(dt.month).zfill(2)}-{str(dt.day).zfill(2)} {str(dt.hour).zfill(2)}:{str(dt.minute).zfill(2)}:{str(dt.second).zfill(2)}'
 		del dt
 	if verbose:
