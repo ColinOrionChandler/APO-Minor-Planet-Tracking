@@ -37,9 +37,11 @@ def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=
 #makeAPOtrackingCommand(objname='Chandler', RA=244.27359, DEC=-19.91599, dRA=55.68869, dDEC=-10.3602, offsets_arcmin=0, verbose=True) # 1/13/2024 COC "Chandler"
 
 
-def getCommandViaJPL(objname, site_code='705', ut=None, timedelta_s=30, verbose=False):
+def getCommandViaJPL(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}):
 	"""
 	Function to generate the tracking command for APO based on current datetime and a specififed object name.
+	Adding limits 10/1/2024 COC -- finished elevation limits 12/21/2024 COC
+	TODO: add AZ limits 12/21/2024 COC
 	4/22/2024 COC
 	"""
 	from astroquery.jplhorizons import Horizons
@@ -56,8 +58,19 @@ def getCommandViaJPL(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 					epochs={ut} # epochs={'start':'2010-01-01', 'stop':'2010-03-01','step':'10d'}
 				)
 	eph = jpl_query.ephemerides(extra_precision=True)
-#	print(eph)
-#	print(eph.columns)
+	
+	if limits != {} and limits != None:
+		if 'min_elev' in limits or 'max_elev' in limits:
+			elevation = eph['EL'][0]
+			print(f'Elevation is: {elevation}')
+			if 'min_elev' in limits and elevation < limits['min_elev']:
+				raise ValueError(f'ERROR: {objname} is at an elevation {round(elevation,2)}, below minimum elevation (limits["min_elev"]).')
+			if 'max_elev' in limits and elevation > limits['max_elev']:
+				raise ValueError(f'ERROR: {objname} is at an elevation {round(elevation,2)}, above the maximum elevation (limits["max_elev"]).')
+	
+	print()
+	print(eph)
+	print(eph.columns)
 	#
 	r = makeAPOtrackingCommand(	objname			= objname, 
 								RA				= eph['RA'][0], 
@@ -78,9 +91,11 @@ if __name__ == '__main__':
 	import argparse # This is to enable command line arguments.
 	parser = argparse.ArgumentParser(description='Get APO telescope command for tracking an object. By Colin Orion Chandler (COC), 2024-04-22.')
 	parser.add_argument('objects', nargs='+', help="Minor planets to query.")
-	parser.add_argument('--site-code', dest='site_code', type=str, default='705', help='observatory site code (default is 705)')
-	parser.add_argument('--ut', dest='ut', type=str, default=None, help=f'UT of format YYYY-MM-DD hh:mm:ss (default is now)')
-	parser.add_argument('--timedelta', dest='time_delta', type=int, default=30, help=f'How many seconds after the UT to calculate. Used to make ephemeris more current (e.g., it takes time to query JPL, or you are planning for some time in the near future).')
+	parser.add_argument('--site-code', dest='site_code', type=str, default='705', help='observatory site code. Default: 705 (APO).')
+	parser.add_argument('--ut', dest='ut', type=str, default=None, help=f'UT of format YYYY-MM-DD hh:mm:ss. Default: now.')
+	parser.add_argument('--timedelta', dest='time_delta', type=int, default=30, help=f'How many seconds after the UT to calculate. Used to make ephemeris more current (e.g., it takes time to query JPL, or you are planning for some time in the near future). Default: 30 seconds.')
+	parser.add_argument('--min-elev', dest='min_elev', type=float, default=10, help=f'Minimum elevation of the target. Default: 10°.')
+	parser.add_argument('--max-elev', dest='max_elev', type=float, default=85, help=f'Maximum elevation of the target. Default: 85°.')
 	parser.add_argument('--verbose', dest='verbose', type=bool, default=False, help=f'say "--verbose True" to see more messages.')
 	args = parser.parse_args()
 	for objname in args.objects:
