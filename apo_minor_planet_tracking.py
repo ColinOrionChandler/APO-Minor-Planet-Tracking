@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
 
+import datetime
+
+from astroquery.jplhorizons import Horizons
+from astroquery.mpc import MPC
+from astropy.time import Time
+from astropy.coordinates import EarthLocation
+from astropy.table import QTable
+from typing import Union, Optional
+import numpy as np
+
 def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=False):
 	'''
 	For APO TUI. 12/12/2023 COC
@@ -37,54 +47,129 @@ def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=
 #makeAPOtrackingCommand(objname='Chandler', RA=244.27359, DEC=-19.91599, dRA=55.68869, dDEC=-10.3602, offsets_arcmin=0, verbose=True) # 1/13/2024 COC "Chandler"
 
 
-def getCommandViaJPL(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}):
+def calculate_motion_components(ephemeris: QTable):
+	"""
+	Calculate RA and Dec rates from Proper Motion and Direction.
+
+	Parameters:
+	- ephemeris (QTable): The ephemeris table returned by `MPC.get_ephemeris`.
+
+	Returns:
+	- QTable: The input ephemeris table with additional columns for RA Rate and Dec Rate.
+	"""
+	if "Proper motion" not in ephemeris.colnames or "Direction" not in ephemeris.colnames:
+		raise ValueError("The ephemeris table must contain 'Proper motion' and 'Direction' columns.")
+		
+	# Extract proper motion and direction
+	proper_motion = ephemeris["Proper motion"]  # Total motion in arcseconds per hour
+	direction = np.radians(ephemeris["Direction"])  # Convert direction from degrees to radians
+	
+	# Calculate RA and Dec rates
+	ra_rate = proper_motion * np.sin(direction)  # RA Rate (arcsec/hour)
+	dec_rate = proper_motion * np.cos(direction)  # Dec Rate (arcsec/hour)
+	
+	# Add rates to the ephemeris table
+	ephemeris["RA Rate"] = ra_rate
+	ephemeris["Dec Rate"] = dec_rate
+	
+	return ephemeris
+
+def get_mpc_ephemeris(object_name: str, site_code: str = '705', ut: Optional[Union[str, datetime.datetime]] = None) -> QTable:
+	"""
+	Retrieve ephemeris data for a specified object from the Minor Planet Center.
+
+	Parameters:
+	- object_name (str): Name or designation of the minor planet or comet.
+	- site_code (str): Observatory code (default is '705').
+	- ut (str or datetime.datetime, optional): UTC date/time in ISO format (YYYY-MM-DDTHH:MM:SS) or a datetime object.
+		Defaults to the current UTC time.
+
+	Returns:
+	- QTable: Ephemeris data table.
+	"""
+	# Determine the start time
+	if ut is None:
+		start_time = Time.now()
+	elif isinstance(ut, str):
+		start_time = Time(ut)
+	elif isinstance(ut, datetime.datetime):
+		start_time = Time(ut)
+	else:
+		raise ValueError("The 'ut' parameter must be a string, datetime object, or None.")
+		
+	# Retrieve ephemeris data
+	ephemeris = MPC.get_ephemeris(
+		target=object_name,
+		location=site_code,
+		start=start_time.iso,
+		step='1d',
+		number=1
+	)
+	
+	ephemeris = calculate_motion_components(ephemeris=ephemeris) # add rates in our normal RA, Dec components and rates. 12/21/2024 COC
+	
+	return ephemeris
+
+
+def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL'):
 	"""
 	Function to generate the tracking command for APO based on current datetime and a specififed object name.
 	Adding limits 10/1/2024 COC -- finished elevation limits 12/21/2024 COC
 	TODO: add AZ limits 12/21/2024 COC
+	Adding providers option so we have a backup in case JPL goes down (e.g., government shutdown).
 	4/22/2024 COC
 	"""
-	from astroquery.jplhorizons import Horizons
-	import datetime
 	if ut == None:
 		dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=timedelta_s)
 		ut = f'{dt.year}-{str(dt.month).zfill(2)}-{str(dt.day).zfill(2)} {str(dt.hour).zfill(2)}:{str(dt.minute).zfill(2)}:{str(dt.second).zfill(2)}'
 		del dt
 	if verbose:
-		print(f'Running JPL query for {objname}, site_code={site_code}, ut={ut}, timedelta_s={timedelta_s} now...')
+		print(f'Running query for {objname}, site_code={site_code}, ut={ut}, timedelta_s={timedelta_s} now...')
 	#
-	jpl_query = Horizons( id=objname,
+	success = False
+	d = {} # results go here
+	if provider.upper() == 'JPL':
+		jpl_query = Horizons( id=objname,
 					location=site_code,
 					epochs={ut} # epochs={'start':'2010-01-01', 'stop':'2010-03-01','step':'10d'}
 				)
-	eph = jpl_query.ephemerides(extra_precision=True)
-	
+		eph = jpl_query.ephemerides(extra_precision=True)
+		d['elevation'] = eph['EL'][0]
+		d['RA'] = eph['RA'][0]
+		d['DEC'] = eph['DEC'][0]
+		d['RA rate'] = eph['RA_rate'][0]
+		d['Dec rate'] = eph['DEC_rate'][0]
+	#
+	if provider.upper() == 'MPC':
+		mpc_ephem = get_mpc_ephemeris(object_name=objname, site_code=site_code, ut=ut)
+		d['elevation'] = mpc_ephem['Altitude'][0]
+		d['RA'] = mpc_ephem['RA'][0]
+		d['DEC'] = mpc_ephem['Dec'][0]
+		d['RA rate'] = mpc_ephem['RA Rate'][0]
+		d['Dec rate'] = mpc_ephem['Dec Rate'][0]
+	#
 	if limits != {} and limits != None:
 		if 'min_elev' in limits or 'max_elev' in limits:
-			elevation = eph['EL'][0]
-			print(f'Elevation is: {elevation}')
-			if 'min_elev' in limits and elevation < limits['min_elev']:
+			print(f'Elevation is: {d["elevation"]}')
+			if 'min_elev' in limits and d['elevation'] < limits['min_elev']:
 				raise ValueError(f'ERROR: {objname} is at an elevation {round(elevation,2)}, below minimum elevation (limits["min_elev"]).')
-			if 'max_elev' in limits and elevation > limits['max_elev']:
+			if 'max_elev' in limits and d['elevation'] > limits['max_elev']:
 				raise ValueError(f'ERROR: {objname} is at an elevation {round(elevation,2)}, above the maximum elevation (limits["max_elev"]).')
-	
-	print()
-	print(eph)
-	print(eph.columns)
+	#
+#	print(eph)
+#	print(eph.columns)
 	#
 	r = makeAPOtrackingCommand(	objname			= objname, 
-								RA				= eph['RA'][0], 
-								DEC				= eph['DEC'][0], 
-								dRA				= eph['RA_rate'][0], 
-								dDEC			= eph['DEC_rate'][0],
-								offsets_arcmin	= 0
+								RA				= d['RA'], 
+								DEC				= d['DEC'], 
+								dRA				= d['RA rate'], 
+								dDEC			= d['Dec rate'],
+								offsets_arcmin	= 0,
 							)
 	return r
 
 
-# Uncomment the following two lines and run here if that's more convenient
-# get_command(objname='2000 GM137')
-# exit()
+
 
 
 if __name__ == '__main__':
@@ -96,9 +181,17 @@ if __name__ == '__main__':
 	parser.add_argument('--timedelta', dest='time_delta', type=int, default=30, help=f'How many seconds after the UT to calculate. Used to make ephemeris more current (e.g., it takes time to query JPL, or you are planning for some time in the near future). Default: 30 seconds.')
 	parser.add_argument('--min-elev', dest='min_elev', type=float, default=10, help=f'Minimum elevation of the target. Default: 10°.')
 	parser.add_argument('--max-elev', dest='max_elev', type=float, default=85, help=f'Maximum elevation of the target. Default: 85°.')
+	parser.add_argument('--provider', dest='provider', type=str, default='JPL', help='Ephemeris service to use. Options are JPL or MPC. Default: JPL.')
 	parser.add_argument('--verbose', dest='verbose', type=bool, default=False, help=f'say "--verbose True" to see more messages.')
 	args = parser.parse_args()
 	for objname in args.objects:
-		command = getCommandViaJPL(objname=objname, site_code=args.site_code, ut=args.ut, timedelta_s=args.time_delta, verbose=args.verbose)
+		command = make_tcc_command(objname=objname, 
+									site_code=args.site_code, 
+									ut=args.ut, 
+									timedelta_s=args.time_delta, 
+									provider = args.provider,
+									limits = {'min_elev':args.min_elev, 'max_elev':args.max_elev},
+									verbose=args.verbose,
+								)
 		print(command)
 		
