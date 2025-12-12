@@ -1,6 +1,6 @@
 # APO Minor Planet Tracking
 
-A simple tool for generating a Telescope Control Console (TCC) command to track a specified minor planet (e.g., asteroids, comets). Written by Colin Orion Chandler (University of Washington, LINCC Frameworks, DiRAC Institute, Northern Arizona University) and most frequently used for follow-up observations of cometary objects identified by the NASA Partner program "Active Asteroids" (http://activeasteroids.net), a Citizen Science program he founded in 2021.
+A simple tool for generating a Telescope Control Console (TCC) command to track a specified minor planet (e.g., asteroids, comets). Written by Colin Orion Chandler (University of Washington, LINCC Frameworks, DiRAC Institute, Northern Arizona University) and most frequently used for follow-up observations of cometary objects identified by the NASA Partner program "Active Asteroids" (http://activeasteroids.net), a Citizen Science program he founded in 2021, and the newly founded NSF-DOE Vera C. Rubin Observatory "Rubin Comet Catchers" project (http://cometcatchers.net) NASA Grantee program.
 
 This program is specifically designed for the Apache Point Observatory (APO) 3.5-meter Astrophysical Research Consortium (ARC) Telescope User Interface (TUI). APO website: https://www.apo.nmsu.edu/
 
@@ -14,6 +14,9 @@ This will provide a command that (1) slews the telescope to asteroid "Chandler,"
 
 tcc track 270.168133497, -22.53122276, 2.8419421296296294e-07, -7.75733024691358e-08 Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="Chandler"
 
+We recently added a --half-rate option, for trackign at 0.5 of the object's on-sky motion in RA and Dec.
+
+There is also a new program file, mpc_pccp.py, which is specifically for going after small solar system bodies that do not yet have preliminary designations, and are found on the Minor Planet Center (MPC) Possible Comet Confirmation Page (PCCP) at https://www.minorplanetcenter.net/iau/NEO/pccp_tabular.html.
 
 Tips:
 
