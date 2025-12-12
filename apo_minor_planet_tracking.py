@@ -111,7 +111,7 @@ def get_mpc_ephemeris(object_name: str, site_code: str = '705', ut: Optional[Uni
 	return ephemeris
 
 
-def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL'):
+def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL', half_rate=False):
 	"""
 	Function to generate the tracking command for APO based on current datetime and a specififed object name.
 	Adding limits 10/1/2024 COC -- finished elevation limits 12/21/2024 COC
@@ -148,13 +148,18 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		d['RA rate'] = mpc_ephem['RA Rate'][0]
 		d['Dec rate'] = mpc_ephem['Dec Rate'][0]
 	#
+	if half_rate:
+		print("** Using half-rates **")
+		d['RA rate'] = d['RA rate'] / 2.0
+		d['Dec rate'] = d['Dec rate'] / 2.0
+	#
 	if limits != {} and limits != None:
 		if 'min_elev' in limits or 'max_elev' in limits:
 			print(f'Elevation is: {d["elevation"]}')
 			if 'min_elev' in limits and d['elevation'] < limits['min_elev']:
-				raise ValueError(f'ERROR: {objname} is at an elevation {round(elevation,2)}, below minimum elevation (limits["min_elev"]).')
+				raise ValueError(f'ERROR: {objname} is at an elevation {round(d["elevation"],2)}, below minimum elevation (limits["min_elev"]).')
 			if 'max_elev' in limits and d['elevation'] > limits['max_elev']:
-				raise ValueError(f'ERROR: {objname} is at an elevation {round(elevation,2)}, above the maximum elevation (limits["max_elev"]).')
+				raise ValueError(f'ERROR: {objname} is at an elevation {round(d["elevation"],2)}, above the maximum elevation (limits["max_elev"]).')
 	#
 #	print(eph)
 #	print(eph.columns)
@@ -182,6 +187,7 @@ if __name__ == '__main__':
 	parser.add_argument('--min-elev', dest='min_elev', type=float, default=10, help=f'Minimum elevation of the target. Default: 10°.')
 	parser.add_argument('--max-elev', dest='max_elev', type=float, default=85, help=f'Maximum elevation of the target. Default: 85°.')
 	parser.add_argument('--provider', dest='provider', type=str, default='JPL', help='Ephemeris service to use. Options are JPL or MPC. Default: JPL.')
+	parser.add_argument('--half-rate', dest='half_rate', action='store_true', help='Use half the tracking rates (RA and Dec).')
 	parser.add_argument('--verbose', dest='verbose', type=bool, default=False, help=f'say "--verbose True" to see more messages.')
 	args = parser.parse_args()
 	for objname in args.objects:
@@ -192,6 +198,6 @@ if __name__ == '__main__':
 									provider = args.provider,
 									limits = {'min_elev':args.min_elev, 'max_elev':args.max_elev},
 									verbose=args.verbose,
+									half_rate=args.half_rate,
 								)
 		print(command)
-		
