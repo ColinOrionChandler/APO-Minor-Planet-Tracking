@@ -5,7 +5,7 @@ import datetime
 from astroquery.jplhorizons import Horizons
 from astroquery.mpc import MPC
 from astropy.time import Time
-from astropy.coordinates import EarthLocation
+from astropy.coordinates import EarthLocation, SkyCoord
 from astropy.table import QTable
 from typing import Union, Optional
 import numpy as np
@@ -111,7 +111,7 @@ def get_mpc_ephemeris(object_name: str, site_code: str = '705', ut: Optional[Uni
 	return ephemeris
 
 
-def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL', half_rate=False):
+def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL', half_rate=False, seeing=1):
 	"""
 	Function to generate the tracking command for APO based on current datetime and a specififed object name.
 	Adding limits 10/1/2024 COC -- finished elevation limits 12/21/2024 COC
@@ -147,15 +147,27 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		d['DEC'] = mpc_ephem['Dec'][0]
 		d['RA rate'] = mpc_ephem['RA Rate'][0]
 		d['Dec rate'] = mpc_ephem['Dec Rate'][0]
+
+	# Print RA/Dec in HMS/DMS
+	coord = SkyCoord(ra=d['RA'], dec=d['DEC'], unit='deg', frame='icrs')
+	ra_hms = coord.ra.to_string(unit='hour', sep=':', precision=2, pad=True)
+	dec_dms = coord.dec.to_string(unit='deg', sep=':', precision=1, alwayssign=True, pad=True)
+	print(f'RA, Dec (HMS/DMS): {ra_hms}  {dec_dms}')
+	#
+	total_rate = np.sqrt(d["RA rate"]**2 + d["RA rate"]**2) / 60 # to "/min"
+	max_exptime = seeing / (total_rate / 60)
+	print(f'Elevation: {round(d["elevation"],2)}°. Pre-half-rate (half_rate={half_rate}) changes are dRA = {round(d["RA rate"]/60,3)} "/min and dDec = {round(d["Dec rate"]/60,3)} "/min.')
+	print(f'Max Exptime = {round(max_exptime,1)} s given the total on-sky motion of {round(total_rate,3)} "/min and {seeing}" seeing.')
 	#
 	if half_rate:
 		print("** Using half-rates **")
 		d['RA rate'] = d['RA rate'] / 2.0
 		d['Dec rate'] = d['Dec rate'] / 2.0
 	#
+	
 	if limits != {} and limits != None:
 		if 'min_elev' in limits or 'max_elev' in limits:
-			print(f'Elevation is: {d["elevation"]}')
+			# print(f'Elevation is: {d["elevation"]}')
 			if 'min_elev' in limits and d['elevation'] < limits['min_elev']:
 				raise ValueError(f'ERROR: {objname} is at an elevation {round(d["elevation"],2)}, below minimum elevation (limits["min_elev"]).')
 			if 'max_elev' in limits and d['elevation'] > limits['max_elev']:
@@ -188,6 +200,7 @@ if __name__ == '__main__':
 	parser.add_argument('--max-elev', dest='max_elev', type=float, default=85, help=f'Maximum elevation of the target. Default: 85°.')
 	parser.add_argument('--provider', dest='provider', type=str, default='JPL', help='Ephemeris service to use. Options are JPL or MPC. Default: JPL.')
 	parser.add_argument('--half-rate', dest='half_rate', action='store_true', help='Use half the tracking rates (RA and Dec).')
+	parser.add_argument('--seeing', dest='seeing', type=float, default=1.0, help='Seeing in arcseconds used to estimate max exposure time. Default: 1.0".')
 	parser.add_argument('--verbose', dest='verbose', type=bool, default=False, help=f'say "--verbose True" to see more messages.')
 	args = parser.parse_args()
 	for objname in args.objects:
@@ -199,5 +212,6 @@ if __name__ == '__main__':
 									limits = {'min_elev':args.min_elev, 'max_elev':args.max_elev},
 									verbose=args.verbose,
 									half_rate=args.half_rate,
+									seeing=args.seeing,
 								)
 		print(command)
