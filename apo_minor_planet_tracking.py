@@ -139,6 +139,16 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		d['DEC'] = eph['DEC'][0]
 		d['RA rate'] = eph['RA_rate'][0]
 		d['Dec rate'] = eph['DEC_rate'][0]
+		# Brightness (JPL)
+		if 'V' in eph.colnames:
+			d['mag'] = eph['V'][0]
+			d['mag_label'] = 'V mag'
+		elif 'Tmag' in eph.colnames:
+			d['mag'] = eph['Tmag'][0]
+			d['mag_label'] = 'Total mag'
+		else:
+			d['mag'] = None
+			d['mag_label'] = 'Magnitude'
 	#
 	if provider.upper() == 'MPC':
 		mpc_ephem = get_mpc_ephemeris(object_name=objname, site_code=site_code, ut=ut)
@@ -147,6 +157,13 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		d['DEC'] = mpc_ephem['Dec'][0]
 		d['RA rate'] = mpc_ephem['RA Rate'][0]
 		d['Dec rate'] = mpc_ephem['Dec Rate'][0]
+		# Brightness (MPC)
+		if 'Mag' in mpc_ephem.colnames:
+			d['mag'] = mpc_ephem['Mag'][0]
+			d['mag_label'] = 'MPC mag'
+		else:
+			d['mag'] = None
+			d['mag_label'] = 'Magnitude'
 
 	# Print RA/Dec in HMS/DMS along with rates in arcsec/sec
 	coord = SkyCoord(ra=d['RA'], dec=d['DEC'], unit='deg', frame='icrs')
@@ -161,6 +178,11 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		f'RA, Dec (HMS/DMS): {ra_hms}  {dec_dms} | '
 		f'Rates ("/s): dRA={ra_rate_as_s:.8f}, dDec={dec_rate_as_s:.8f}'
 	)
+	# Print brightness information
+	if d.get('mag') is not None and np.isfinite(d['mag']):
+		print(f'Brightness: {d["mag_label"]} = {d["mag"]:.2f}')
+	else:
+		print('Brightness: not available from this ephemeris source')
 	#
 	total_rate = np.sqrt(d["RA rate"]**2 + d["RA rate"]**2) / 60 # to "/min"
 	max_exptime = seeing / (total_rate / 60)
