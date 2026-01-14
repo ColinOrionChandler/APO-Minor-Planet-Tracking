@@ -148,11 +148,19 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		d['RA rate'] = mpc_ephem['RA Rate'][0]
 		d['Dec rate'] = mpc_ephem['Dec Rate'][0]
 
-	# Print RA/Dec in HMS/DMS
+	# Print RA/Dec in HMS/DMS along with rates in arcsec/sec
 	coord = SkyCoord(ra=d['RA'], dec=d['DEC'], unit='deg', frame='icrs')
 	ra_hms = coord.ra.to_string(unit='hour', sep=':', precision=2, pad=True)
 	dec_dms = coord.dec.to_string(unit='deg', sep=':', precision=1, alwayssign=True, pad=True)
-	print(f'RA, Dec (HMS/DMS): {ra_hms}  {dec_dms}')
+
+	# Rates are stored in arcsec/hour; convert to arcsec/second
+	ra_rate_as_s = d['RA rate'] / 3600.0
+	dec_rate_as_s = d['Dec rate'] / 3600.0
+
+	print(
+		f'RA, Dec (HMS/DMS): {ra_hms}  {dec_dms} | '
+		f'Rates ("/s): dRA={ra_rate_as_s:.8f}, dDec={dec_rate_as_s:.8f}'
+	)
 	#
 	total_rate = np.sqrt(d["RA rate"]**2 + d["RA rate"]**2) / 60 # to "/min"
 	max_exptime = seeing / (total_rate / 60)
