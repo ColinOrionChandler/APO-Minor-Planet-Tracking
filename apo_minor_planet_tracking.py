@@ -149,6 +149,13 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		else:
 			d['mag'] = None
 			d['mag_label'] = 'Magnitude'
+		# True anomaly (JPL, degrees)
+		if 'true_anom' in eph.colnames:
+			d['true_anom'] = eph['true_anom'][0]
+		elif 'TA' in eph.colnames:  # legacy/alternate name fallback
+			d['true_anom'] = eph['TA'][0]
+		else:
+			d['true_anom'] = None
 	#
 	if provider.upper() == 'MPC':
 		mpc_ephem = get_mpc_ephemeris(object_name=objname, site_code=site_code, ut=ut)
@@ -164,6 +171,8 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		else:
 			d['mag'] = None
 			d['mag_label'] = 'Magnitude'
+		# True anomaly not provided by MPC ephemeris
+		d['true_anom'] = None
 
 	# Print RA/Dec in HMS/DMS along with rates in arcsec/sec
 	coord = SkyCoord(ra=d['RA'], dec=d['DEC'], unit='deg', frame='icrs')
@@ -178,11 +187,17 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		f'RA, Dec (HMS/DMS): {ra_hms}  {dec_dms} | '
 		f'Rates ("/s): dRA={ra_rate_as_s:.8f}, dDec={dec_rate_as_s:.8f}'
 	)
-	# Print brightness information
+	# Print brightness and true anomaly information
+	parts = []
 	if d.get('mag') is not None and np.isfinite(d['mag']):
-		print(f'Brightness: {d["mag_label"]} = {d["mag"]:.2f}')
+		parts.append(f'{d["mag_label"]} = {d["mag"]:.2f}')
+	if d.get('true_anom') is not None and np.isfinite(d['true_anom']):
+		parts.append(f'True anomaly = {d["true_anom"]:.1f}°')
+
+	if len(parts) > 0:
+		print('Brightness / Geometry: ' + ' | '.join(parts))
 	else:
-		print('Brightness: not available from this ephemeris source')
+		print('Brightness / Geometry: not available from this ephemeris source')
 	#
 	total_rate = np.sqrt(d["RA rate"]**2 + d["RA rate"]**2) / 60 # to "/min"
 	max_exptime = seeing / (total_rate / 60)
