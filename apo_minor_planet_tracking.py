@@ -199,7 +199,7 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 	else:
 		print('Brightness / Geometry: not available from this ephemeris source')
 	#
-	total_rate = np.sqrt(d["RA rate"]**2 + d["RA rate"]**2) / 60 # to "/min"
+	total_rate = np.sqrt(d["RA rate"]**2 + d["Dec rate"]**2) / 60 # to "/min"
 	max_exptime = seeing / (total_rate / 60)
 	print(f'Elevation: {round(d["elevation"],2)}°. Pre-half-rate (half_rate={half_rate}) changes are dRA = {round(d["RA rate"]/60,3)} "/min and dDec = {round(d["Dec rate"]/60,3)} "/min.')
 	print(f'Max Exptime = {round(max_exptime,1)} s given the total on-sky motion of {round(total_rate,3)} "/min and {seeing}" seeing.')
