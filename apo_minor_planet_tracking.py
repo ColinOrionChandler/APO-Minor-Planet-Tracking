@@ -176,12 +176,24 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 
 	# Print RA/Dec in HMS/DMS along with rates in arcsec/sec
 	coord = SkyCoord(ra=d['RA'], dec=d['DEC'], unit='deg', frame='icrs')
-	ra_hms = coord.ra.to_string(unit='hour', sep=':', precision=2, pad=True)
-	dec_dms = coord.dec.to_string(unit='deg', sep=':', precision=1, alwayssign=True, pad=True)
 
-	# Rates are stored in arcsec/hour; convert to arcsec/second
+	# Rates are stored in arcsec/hour; convert to arcsec/second.
+	# Apply a cos(Dec) correction to the stored RA rate so it is consistent everywhere.
+	# (This also affects total_rate, half_rate, and the final tracking command.)
+	cos_dec = np.cos(np.deg2rad(float(d['DEC'])))
+	if np.isfinite(cos_dec) and np.abs(cos_dec) > 1e-12:
+		# Preserve the original value for debugging/reference.
+		d['RA rate_raw'] = d['RA rate']
+		d['RA rate'] = d['RA rate'] / cos_dec
+	else:
+		d['RA rate_raw'] = d['RA rate']
+		d['RA rate'] = np.nan
+
 	ra_rate_as_s = d['RA rate'] / 3600.0
 	dec_rate_as_s = d['Dec rate'] / 3600.0
+
+	ra_hms = coord.ra.to_string(unit='hour', sep=':', precision=2, pad=True)
+	dec_dms = coord.dec.to_string(unit='deg', sep=':', precision=1, alwayssign=True, pad=True)
 
 	print(
 		f'RA, Dec (HMS/DMS): {ra_hms}  {dec_dms} | '
