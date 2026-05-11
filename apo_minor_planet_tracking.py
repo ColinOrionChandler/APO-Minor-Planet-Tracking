@@ -1,26 +1,120 @@
 #!/usr/bin/env python3
 
+"""Generate APO TCC tracking commands for moving solar-system targets.
+
+The main command path queries JPL Horizons, converts the returned ephemeris into
+the rate convention expected by the APO Telescope Control Console (TCC), and
+prints the human-checkable observing context before returning the one-line
+``tcc track`` command.  The MPC provider is kept as a fallback when Horizons is
+unavailable or when an object is easier to query through the Minor Planet Center.
+"""
+
 import datetime
+from typing import Optional, Union
 
 from astroquery.jplhorizons import Horizons
 from astroquery.mpc import MPC
 from astropy.time import Time
-from astropy.coordinates import EarthLocation, SkyCoord
+from astropy.coordinates import SkyCoord
 from astropy.table import QTable
-from typing import Union, Optional
+from astropy import units as u
 import numpy as np
+
+
+# APO TCC wants rates in degrees per second; ephemeris providers report the
+# components in arcsec per hour.  3600 arcsec/degree * 3600 seconds/hour gives
+# the conversion factor for arcsec/hour -> degrees/second.
+APO_TCC_RATE_CONVERSION = 12960000.0
+
+# Horizons has changed/varied uncertainty column names across output modes.  Try
+# the most common RA/Dec pairs in priority order and report the first usable one.
+JPL_UNCERTAINTY_COLUMNS = (
+	('RA_3sigma', 'DEC_3sigma', '3-sigma'),
+	('RA_3sig', 'DEC_3sig', '3-sigma'),
+	('RA_sigma', 'DEC_sigma', '1-sigma'),
+	('RA_sig', 'DEC_sig', '1-sigma'),
+	('RA_1sigma', 'DEC_1sigma', '1-sigma'),
+)
+
+
+def _coerce_utc_string(ut: Optional[Union[str, datetime.datetime]], timedelta_s: int = 0) -> str:
+	"""Return a UTC timestamp string accepted by Horizons and MPC queries."""
+	if ut is None:
+		dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=timedelta_s)
+	elif isinstance(ut, datetime.datetime):
+		dt = ut
+		if dt.tzinfo is None:
+			dt = dt.replace(tzinfo=datetime.timezone.utc)
+		else:
+			dt = dt.astimezone(datetime.timezone.utc)
+	else:
+		dt = Time(ut).to_datetime(timezone=datetime.timezone.utc)
+
+	return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _ephemeris_value_to_arcsec(value):
+	"""Convert a scalar ephemeris uncertainty to arcseconds, or ``None`` if unusable."""
+	try:
+		if np.ma.is_masked(value):
+			return None
+	except Exception:
+		pass
+
+	try:
+		if hasattr(value, 'mask') and np.any(value.mask):
+			return None
+	except Exception:
+		pass
+
+	try:
+		if hasattr(value, 'to'):
+			return float(value.to(u.arcsec).value)
+	except Exception:
+		pass
+
+	try:
+		return float(value)
+	except Exception:
+		return None
+
+
+def _extract_jpl_position_uncertainty(eph):
+	"""Return the first finite JPL RA/Dec uncertainty pair in arcseconds."""
+	for ra_col, dec_col, label in JPL_UNCERTAINTY_COLUMNS:
+		if ra_col not in eph.colnames or dec_col not in eph.colnames:
+			continue
+
+		ra_arcsec = _ephemeris_value_to_arcsec(eph[ra_col][0])
+		dec_arcsec = _ephemeris_value_to_arcsec(eph[dec_col][0])
+		if ra_arcsec is None or dec_arcsec is None:
+			continue
+		if not (np.isfinite(ra_arcsec) and np.isfinite(dec_arcsec)):
+			continue
+
+		return {
+			'label': label,
+			'ra_arcsec': ra_arcsec,
+			'dec_arcsec': dec_arcsec,
+		}
+
+	return None
+
 
 def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=False):
 	'''
-	For APO TUI. 12/12/2023 COC
-	Note: do not bother with offset_arcmin here (see instructions below) 1/13/2024 COC
+	Build the single-line ``tcc track`` command consumed by the APO TUI.
+
+	``dRA`` and ``dDEC`` are expected in arcsec/hour.  Offsets are intentionally
+	not folded into the command; observers should apply object-arc offsets in TUI
+	after the slew completes.
 	
 	example tracking line:
 		tcc track 45.43530667, 34.59037667, -0.000001208371914, -0.000002105362654 Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="426P"
 
 	Instructions (for standalone, non-JPL case):
 		1. Generate ephemeris in decimal degree mode
-		2. Supply object name, RA, Dec, etc. to funtion, such as
+		2. Supply object name, RA, Dec, etc. to function, such as
 			makeAPOtrackingCommand(objname='2015 FW412', RA=171.71866, DEC=-11.84938, dRA=7.870796, dDEC=-10.8067, offsets_arcmin=0)
 		   You should get a result similar to this:
 			  tcc track 171.71866, -11.84938, 6.073145061728395e-07, -8.338503086419753e-07 Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="2015 FW412"
@@ -31,15 +125,11 @@ def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=
 			b. Choose "Object Arc" and "Abs" (absolute offset)
 			c. Click "Offset" once the slew is over
 		6. Don't forget guiding!
-		8. Don't use "slew" in TCS or it will override what we just did.
+		7. Don't use "slew" in TCS or it will override what we just did.
 	'''
-	convfactor = 12960000
-#	newRA = RA + 2*(1/60)
-#	newDEC = DEC + 2*(1/60)
-	# trying without offset, do the offset at the telescope
 	newRA = RA
 	newDEC = DEC
-	s = f'tcc track {newRA}, {newDEC}, {dRA/convfactor}, {dDEC/convfactor} Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="{objname}"'
+	s = f'tcc track {newRA}, {newDEC}, {dRA/APO_TCC_RATE_CONVERSION}, {dDEC/APO_TCC_RATE_CONVERSION} Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="{objname}"'
 	if verbose: print(s)
 	return(s)
 
@@ -113,25 +203,37 @@ def get_mpc_ephemeris(object_name: str, site_code: str = '705', ut: Optional[Uni
 
 def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL', half_rate=False, seeing=1):
 	"""
-	Function to generate the tracking command for APO based on current datetime and a specififed object name.
-	Adding limits 10/1/2024 COC -- finished elevation limits 12/21/2024 COC
-	TODO: add AZ limits 12/21/2024 COC
-	Adding providers option so we have a backup in case JPL goes down (e.g., government shutdown).
-	4/22/2024 COC
+	Query an ephemeris provider and produce the APO TCC command for one object.
+
+	The printed pre-command diagnostics are intended for the observer's final
+	reality check: RA/Dec in sexagesimal form, sky-motion components, brightness
+	or geometry when available, elevation, exposure-time guidance, and JPL
+	positional uncertainty when Horizons returns a usable uncertainty column.
+
+	Args:
+		objname: JPL Horizons/MPC object name or designation.
+		site_code: Observatory code; APO is MPC site 705.
+		ut: UTC timestamp string or datetime.  If omitted, query now plus
+			``timedelta_s`` seconds so the generated rates are current by the time
+			the command is pasted into TUI.
+		timedelta_s: Offset in seconds used only when ``ut`` is omitted.
+		limits: Optional elevation guardrails.  Use ``None`` or ``{}`` to disable.
+		provider: ``JPL`` for Horizons or ``MPC`` for Minor Planet Center.
+		half_rate: Divide both tracking rates by two for half-rate tracking.
+		seeing: Seeing in arcseconds for the max-exposure estimate.
 	"""
-	if ut == None:
-		dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=timedelta_s)
-		ut = f'{dt.year}-{str(dt.month).zfill(2)}-{str(dt.day).zfill(2)} {str(dt.hour).zfill(2)}:{str(dt.minute).zfill(2)}:{str(dt.second).zfill(2)}'
-		del dt
+	ut = _coerce_utc_string(ut, timedelta_s=timedelta_s)
+	provider_name = provider.upper()
 	if verbose:
-		print(f'Running query for {objname}, site_code={site_code}, ut={ut}, timedelta_s={timedelta_s} now...')
+		print(f'Running query for {objname}, site_code={site_code}, ut={ut} UTC, timedelta_s={timedelta_s} now...')
 	#
-	success = False
 	d = {} # results go here
-	if provider.upper() == 'JPL':
-		jpl_query = Horizons( id=objname,
+	if provider_name == 'JPL':
+		ut_time = Time(ut)
+		jpl_query = Horizons(
+					id=objname,
 					location=site_code,
-					epochs={ut} # epochs={'start':'2010-01-01', 'stop':'2010-03-01','step':'10d'}
+					epochs=ut_time.jd  # single user-supplied epoch in JD
 				)
 		eph = jpl_query.ephemerides(extra_precision=True)
 		d['elevation'] = eph['EL'][0]
@@ -139,6 +241,10 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		d['DEC'] = eph['DEC'][0]
 		d['RA rate'] = eph['RA_rate'][0]
 		d['Dec rate'] = eph['DEC_rate'][0]
+		pos_unc = _extract_jpl_position_uncertainty(eph)
+		d['pos_unc_label'] = pos_unc['label'] if pos_unc else None
+		d['pos_unc_ra_as'] = pos_unc['ra_arcsec'] if pos_unc else None
+		d['pos_unc_dec_as'] = pos_unc['dec_arcsec'] if pos_unc else None
 		# Brightness (JPL)
 		if 'V' in eph.colnames:
 			d['mag'] = eph['V'][0]
@@ -157,7 +263,7 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		else:
 			d['true_anom'] = None
 	#
-	if provider.upper() == 'MPC':
+	if provider_name == 'MPC':
 		mpc_ephem = get_mpc_ephemeris(object_name=objname, site_code=site_code, ut=ut)
 		d['elevation'] = mpc_ephem['Altitude'][0]
 		d['RA'] = mpc_ephem['RA'][0]
@@ -173,6 +279,11 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 			d['mag_label'] = 'Magnitude'
 		# True anomaly not provided by MPC ephemeris
 		d['true_anom'] = None
+		d['pos_unc_label'] = None
+		d['pos_unc_ra_as'] = None
+		d['pos_unc_dec_as'] = None
+	if provider_name not in {'JPL', 'MPC'}:
+		raise ValueError("provider must be 'JPL' or 'MPC'.")
 
 	# Print RA/Dec in HMS/DMS along with rates in arcsec/sec
 	coord = SkyCoord(ra=d['RA'], dec=d['DEC'], unit='deg', frame='icrs')
@@ -195,9 +306,15 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 	ra_hms = coord.ra.to_string(unit='hour', sep=':', precision=2, pad=True)
 	dec_dms = coord.dec.to_string(unit='deg', sep=':', precision=1, alwayssign=True, pad=True)
 
+	pos_unc_str = ''
+	if d.get('pos_unc_ra_as') is not None and d.get('pos_unc_dec_as') is not None:
+		if np.isfinite(d['pos_unc_ra_as']) and np.isfinite(d['pos_unc_dec_as']):
+			pos_unc_str = f' | Pos unc ({d.get("pos_unc_label","?")}, "/"): sigma_RA={d["pos_unc_ra_as"]:.2f}, sigma_Dec={d["pos_unc_dec_as"]:.2f}'
+
 	print(
 		f'RA, Dec (HMS/DMS): {ra_hms}  {dec_dms} | '
 		f'Rates ("/s): dRA={ra_rate_as_s:.8f}, dDec={dec_rate_as_s:.8f}'
+		f'{pos_unc_str}'
 	)
 	# Print brightness and true anomaly information
 	parts = []
@@ -226,9 +343,15 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		if 'min_elev' in limits or 'max_elev' in limits:
 			# print(f'Elevation is: {d["elevation"]}')
 			if 'min_elev' in limits and d['elevation'] < limits['min_elev']:
-				raise ValueError(f'ERROR: {objname} is at an elevation {round(d["elevation"],2)}, below minimum elevation (limits["min_elev"]).')
+				raise ValueError(
+					f'ERROR: {objname} at UT {ut} is at an elevation {round(d["elevation"],2)}°, '
+					f'below minimum elevation ({limits["min_elev"]}°).'
+				)
 			if 'max_elev' in limits and d['elevation'] > limits['max_elev']:
-				raise ValueError(f'ERROR: {objname} is at an elevation {round(d["elevation"],2)}, above the maximum elevation (limits["max_elev"]).')
+				raise ValueError(
+					f'ERROR: {objname} at UT {ut} is at an elevation {round(d["elevation"],2)}°, '
+					f'above the maximum elevation ({limits["max_elev"]}°).'
+				)
 	#
 #	print(eph)
 #	print(eph.columns)
@@ -248,7 +371,7 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 
 if __name__ == '__main__':
 	import argparse # This is to enable command line arguments.
-	parser = argparse.ArgumentParser(description='Get APO telescope command for tracking an object. By Colin Orion Chandler (COC), 2024-04-22.')
+	parser = argparse.ArgumentParser(description='Query JPL/MPC ephemerides and print an APO TCC tracking command.')
 	parser.add_argument('objects', nargs='+', help="Minor planets to query.")
 	parser.add_argument('--site-code', dest='site_code', type=str, default='705', help='observatory site code. Default: 705 (APO).')
 	parser.add_argument('--ut', dest='ut', type=str, default=None, help=f'UT of format YYYY-MM-DD hh:mm:ss. Default: now.')

@@ -1,52 +1,120 @@
 # APO Minor Planet Tracking
 
-A simple tool for generating a Telescope Control Console (TCC) command to track a specified minor planet (e.g., asteroids, comets). Written by Colin Orion Chandler (University of Washington, LINCC Frameworks, DiRAC Institute, Northern Arizona University) and most frequently used for follow-up observations of cometary objects identified by the NASA Partner program "Active Asteroids" (http://activeasteroids.net), a Citizen Science program he founded in 2021, and the newly founded NSF-DOE Vera C. Rubin Observatory "Rubin Comet Catchers" project (http://cometcatchers.net) NASA Grantee program.
+APO Minor Planet Tracking generates one-line Telescope Control Console (TCC)
+commands for tracking moving solar-system targets with the Apache Point
+Observatory 3.5-meter ARC telescope.  It is most often used for follow-up of
+active asteroids, comet candidates, and Rubin Comet Catchers targets where the
+telescope should track the object instead of the field stars.
 
-This program is specifically designed for the Apache Point Observatory (APO) 3.5-meter Astrophysical Research Consortium (ARC) Telescope User Interface (TUI). APO website: https://www.apo.nmsu.edu/
+The main workflow queries JPL Horizons or, as a fallback, the Minor Planet Center
+(MPC), prints observer-facing diagnostics, and returns a command like:
 
-The input name should be a minor planet name that is queryable via JPL Horizons: https://ssd.jpl.nasa.gov/horizons
-
-Example:
-
-python apo_minor_planet_tracking.py "Chandler"
-
-This will provide a command that (1) slews the telescope to asteroid "Chandler," (2) starts tracking at asteroid Chandler's rate of motion on the sky (so stars are trailed, not the asteroid), and (3) sets the FITS header to have the name "Chandler" in it. The command, which is in the form of a single-line of text, will look something like this:
-
+```console
 tcc track 270.168133497, -22.53122276, 2.8419421296296294e-07, -7.75733024691358e-08 Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="Chandler"
+```
 
-We recently added a --half-rate option, for trackign at 0.5 of the object's on-sky motion in RA and Dec.
+## Scripts
 
-There is also a new program file, mpc_pccp.py, which is specifically for going after small solar system bodies that do not yet have preliminary designations, and are found on the Minor Planet Center (MPC) Possible Comet Confirmation Page (PCCP) at https://www.minorplanetcenter.net/iau/NEO/pccp_tabular.html.
+- `apo_minor_planet_tracking.py` queries JPL Horizons by default and can query
+  MPC ephemerides with `--provider MPC`.
+- `mpc_pccp.py` queries the MPC Possible Comet Confirmation Page (PCCP) for
+  objects that may not yet have stable provisional designations.
 
-Tips:
+## Installation
 
-- Paste the command into the window that appears when activating "Run_Commands" from the "Scripts" menu.
+Use a Python environment with:
 
-- Apply any desired offsets using TUI after the slew is done. (Do not add offsets via this Python program.)
+```console
+pip install astroquery astropy numpy pandas requests
+```
 
-- Guide as normal. The telescope understands you are tracking the object, not the star, and adjusts accordingly.
+The PCCP helper also expects the standard Python scientific stack used by the
+main script.  No package install step is required for this repo; run the scripts
+directly from the checkout.
 
-- For nearby objects, it may be necessary to re-run this program to get updated rates, even if you manually offset the telescope to keep the object in the field of view (FOV).
+## Quick Start
 
-- Some objects for JPL Horizons have multiple matching names. For example, Didymos has multiple entries (as of 2024 April 2), so typing "Didymos (primary body)" will let the program run.
+Query JPL Horizons for an object visible from APO site code `705`:
 
+```console
+python apo_minor_planet_tracking.py "Chandler"
+```
 
-Disclaimer:
+Query a specific UTC epoch:
 
-- You should do a reality check before executing any tcc command.
+```console
+python apo_minor_planet_tracking.py "Didymos (primary body)" --ut "2026-05-11 06:00:00"
+```
 
-- The program author makes no warranty, implied or otherise.
+Use half-rate tracking and a seeing estimate for exposure-time guidance:
 
+```console
+python apo_minor_planet_tracking.py "Chandler" --half-rate --seeing 1.2
+```
 
-How to acknowledge use:
+Use MPC as the ephemeris provider if Horizons is unavailable:
 
-- If you use this code, please add the following text: "This research used APO Minor Planet Tracking by Colin Orion Chandler."
+```console
+python apo_minor_planet_tracking.py "Chandler" --provider MPC
+```
 
-- Please also cite Giorgini 1996 for JPL Horizons, and astropy as appropriate.
+Generate a TCC command for an object listed on the PCCP:
 
+```console
+python mpc_pccp.py --show-object P12hxMW --obs-code 705
+```
 
-Acknowledgements:
+## Output
 
-- Many thanks to APO operators, especially Candace and Russett.
+Before the final `tcc track` command, the main script prints:
 
-- Thank you Will Oldroyd (Northern Arizona University) for testing this program.
+- RA and Dec in sexagesimal form for a quick telescope-operator check.
+- RA and Dec rates in arcsec/second.
+- JPL positional uncertainty when Horizons exposes a usable RA/Dec uncertainty
+  pair.
+- Brightness and true anomaly when available from the selected ephemeris source.
+- Elevation and an estimated maximum exposure time for the requested seeing.
+
+Paste only the final `tcc track ...` line into TUI's `Scripts -> Run_Commands`
+window unless you explicitly need one of the diagnostic lines elsewhere.
+
+## Operational Notes
+
+- Always sanity-check the object, coordinates, rates, and elevation before
+  executing a command at the telescope.
+- Apply offsets in TUI after the slew finishes.  Do not encode observing offsets
+  in the Python command.
+- Guide normally.  The telescope tracks the object, so field stars will trail.
+- Nearby or fast-moving targets may need fresh commands during the night.
+- Some Horizons names are ambiguous.  Use the exact disambiguated Horizons name
+  when needed, such as `"Didymos (primary body)"`.
+
+More detailed command notes live in [docs/usage.md](docs/usage.md).
+
+## Development Checks
+
+Run the lightweight syntax check before committing:
+
+```console
+python -m py_compile apo_minor_planet_tracking.py mpc_pccp.py
+```
+
+Live ephemeris checks require network access to JPL Horizons or MPC.
+
+## Acknowledgement
+
+If you use this code, please include:
+
+> This research used APO Minor Planet Tracking by Colin Orion Chandler.
+
+Please also cite JPL Horizons (Giorgini 1996) and Astropy as appropriate.
+
+## Disclaimer
+
+This repository is an observing aid.  The author provides no warranty, implied or
+otherwise, and observers remain responsible for verifying commands before use.
+
+## Acknowledgements
+
+Thanks to APO operators, especially Candace and Russett, and to Will Oldroyd
+(Northern Arizona University) for testing.

@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 
 """
-Send a POST request to the MPC confirmeph2.cgi endpoint and save the result.
+Query the MPC Possible Comet Confirmation Page and print APO TCC commands.
+
+The PCCP lists objects that may not yet have stable provisional designations, so
+the normal JPL Horizons workflow can be unavailable or ambiguous.  This helper
+submits the MPC ``confirmeph2.cgi`` form for an observatory code, parses the
+fixed-width response blocks, selects the ephemeris row nearest to the current UTC
+time, and converts the MPC motion columns into an APO ``tcc track`` command.
 
 Usage:
-    python mpc_confirmeph2_request.py -o output.html
+    python mpc_pccp.py --show-object P12hxMW --obs-code 705
 """
 
 import argparse
 import sys
 import requests
-from bs4 import BeautifulSoup
-import pandas as pd
-from io import StringIO
-from urllib.parse import urlparse, parse_qs
 from datetime import datetime, timezone
 
 def makeAPOtrackingCommand_pccp(objname, RA, DEC, dRA, dDEC, verbose=False):
@@ -45,7 +47,7 @@ def makeAPOtrackingCommand_pccp(objname, RA, DEC, dRA, dDEC, verbose=False):
     # PCCP provides dRA, dDEC in arcsec per minute, so:
     #   1) convert to arcsec per hour
     #   2) convert arcsec/hour to deg/sec
-    convfactor = 12960000.0  # arcsec per 360 deg per hour (360*3600*1000?); empirically used in existing tools
+    convfactor = 12960000.0  # arcsec/hour -> degrees/second for APO TCC
 
     # Use the RA/Dec values as provided (already in decimal degrees)
     newRA = RA
@@ -83,6 +85,10 @@ def parse_pccp_html(html_text: str) -> dict:
     Returns:
         dict[objname, pandas.DataFrame]
     """
+    # Import pandas only when parsing so `mpc_pccp.py --help` stays lightweight
+    # and does not emit optional pandas/Arrow CPU-probing warnings.
+    import pandas as pd
+
     objs_lines = {}
     section = "pregame"
     objname = None
@@ -219,7 +225,7 @@ def parse_pccp_html(html_text: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Send MPC confirmeph2.cgi POST request and save response."
+        description="Query MPC PCCP ephemerides and generate an APO TCC tracking command."
     )
     parser.add_argument(
         "-o", "--output",
@@ -252,28 +258,20 @@ def main():
     )
     args = parser.parse_args()
 
-    # Headers copied from your Firefox request (minus Content-Length)
+    # MPC currently accepts a normal form POST.  Keep the headers intentionally
+    # small so the script is not tied to a personal browser session.
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:146.0) Gecko/20100101 Firefox/146.0",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
         "Referer": "https://minorplanetcenter.net/iau/NEO/pccp_tabular.html",
         "Content-Type": "application/x-www-form-urlencoded",
         "Origin": "https://minorplanetcenter.net",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-        "Sec-Fetch-User": "?1",
-        # You *can* omit this cookie if you don't care about session-like behavior
-        "Cookie": "WT_FPC=id=73.193.80.254-1560926832.31222558:lv=1765523909578:ss=1765523906823",
     }
 
-    # You can send the form body as a dict; requests will URL-encode it.
-    # This is equivalent to your raw body:
-    # W=a&mb=-30&mf=30&dl=-90&du=%2B90&nl=0&nu=100&sort=d&Parallax=1&obscode=500&long=&lat=&alt=&int=2&start=0&raty=a&mot=m&dmot=p&out=f&sun=x&oalt=20
+    # Form fields mirror the interactive PCCP "ephemerides" page.  The defaults
+    # request decimal RA/Dec and rates, filter out objects below 20 degrees
+    # altitude, and sort by discovery date.
     data = {
         "W": "a",
         "mb": "-30",
