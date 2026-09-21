@@ -101,13 +101,15 @@ def _extract_jpl_position_uncertainty(eph):
 	return None
 
 
-def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=False):
+def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=False, sidereal=False):
 	'''
 	Build the single-line ``tcc track`` command consumed by the APO TUI.
 
 	``dRA`` and ``dDEC`` are expected in arcsec/hour.  Offsets are intentionally
 	not folded into the command; observers should apply object-arc offsets in TUI
 	after the slew completes.
+	When ``sidereal`` is true, the supplied rates are ignored and zero rates are
+	written, so the telescope tracks the sidereal field at the queried position.
 	
 	example tracking line:
 		tcc track 45.43530667, 34.59037667, -0.000001208371914, -0.000002105362654 Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="426P"
@@ -129,6 +131,9 @@ def makeAPOtrackingCommand(objname, RA, DEC, dRA, dDEC, offsets_arcmin, verbose=
 	'''
 	newRA = RA
 	newDEC = DEC
+	if sidereal:
+		dRA = 0.0
+		dDEC = 0.0
 	s = f'tcc track {newRA}, {newDEC}, {dRA/APO_TCC_RATE_CONVERSION}, {dDEC/APO_TCC_RATE_CONVERSION} Fk5=2000.0 /Rotangle=0.0 /Rottype=Object /Name="{objname}"'
 	if verbose: print(s)
 	return(s)
@@ -201,7 +206,7 @@ def get_mpc_ephemeris(object_name: str, site_code: str = '705', ut: Optional[Uni
 	return ephemeris
 
 
-def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL', half_rate=False, seeing=1):
+def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=False, limits={'min_elev':10, 'max_elev':85}, provider='JPL', half_rate=False, seeing=1, sidereal=False):
 	"""
 	Query an ephemeris provider and produce the APO TCC command for one object.
 
@@ -220,8 +225,13 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		limits: Optional elevation guardrails.  Use ``None`` or ``{}`` to disable.
 		provider: ``JPL`` for Horizons or ``MPC`` for Minor Planet Center.
 		half_rate: Divide both tracking rates by two for half-rate tracking.
+		sidereal: Generate a zero-rate command that tracks the sidereal field at
+			the queried position instead of tracking the moving object.
 		seeing: Seeing in arcseconds for the max-exposure estimate.
 	"""
+	if half_rate and sidereal:
+		raise ValueError("half_rate and sidereal tracking modes are mutually exclusive.")
+
 	ut = _coerce_utc_string(ut, timedelta_s=timedelta_s)
 	provider_name = provider.upper()
 	if verbose:
@@ -337,6 +347,8 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		print("** Using half-rates **")
 		d['RA rate'] = d['RA rate'] / 2.0
 		d['Dec rate'] = d['Dec rate'] / 2.0
+	if sidereal:
+		print("** Using sidereal tracking (zero non-sidereal rates) **")
 	#
 	
 	if limits != {} and limits != None:
@@ -362,6 +374,7 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 								dRA				= d['RA rate'], 
 								dDEC			= d['Dec rate'],
 								offsets_arcmin	= 0,
+								sidereal		= sidereal,
 							)
 	return r
 
@@ -380,6 +393,7 @@ if __name__ == '__main__':
 	parser.add_argument('--max-elev', dest='max_elev', type=float, default=85, help=f'Maximum elevation of the target. Default: 85°.')
 	parser.add_argument('--provider', dest='provider', type=str, default='JPL', help='Ephemeris service to use. Options are JPL or MPC. Default: JPL.')
 	parser.add_argument('--half-rate', dest='half_rate', action='store_true', help='Use half the tracking rates (RA and Dec).')
+	parser.add_argument('--sidereal', dest='sidereal', action='store_true', help='Track the sidereal field by emitting zero non-sidereal rates.')
 	parser.add_argument('--seeing', dest='seeing', type=float, default=1.0, help='Seeing in arcseconds used to estimate max exposure time. Default: 1.0".')
 	parser.add_argument('--verbose', dest='verbose', type=bool, default=False, help=f'say "--verbose True" to see more messages.')
 	args = parser.parse_args()
@@ -392,6 +406,7 @@ if __name__ == '__main__':
 									limits = {'min_elev':args.min_elev, 'max_elev':args.max_elev},
 									verbose=args.verbose,
 									half_rate=args.half_rate,
+									sidereal=args.sidereal,
 									seeing=args.seeing,
 								)
 		print(command)

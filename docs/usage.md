@@ -27,6 +27,7 @@ python apo_minor_planet_tracking.py "Chandler" --timedelta 120
 python apo_minor_planet_tracking.py "Chandler" --provider MPC
 python apo_minor_planet_tracking.py "Chandler" --min-elev 20 --max-elev 80
 python apo_minor_planet_tracking.py "Chandler" --half-rate
+python apo_minor_planet_tracking.py "Chandler" --sidereal
 python apo_minor_planet_tracking.py "Chandler" --seeing 1.4
 ```
 
@@ -55,6 +56,16 @@ human review:
 `--half-rate` divides both RA and Dec rates by two after the diagnostics are
 computed.  The pre-half-rate rates are still printed so the observer can see the
 full on-sky motion before the command is modified.
+
+## Sidereal Tracking
+
+`--sidereal` keeps the queried RA/Dec position but emits zero dRA and dDec in
+the final `tcc track` command.  This makes the telescope follow the sidereal
+field, so field stars remain fixed and the moving target drifts through the
+image.  The normal ephemeris query and elevation guardrails still run, and the
+printed motion diagnostics describe the object's actual motion before the
+sidereal mode is applied.  `--sidereal` and `--half-rate` cannot be used
+together.
 
 ## PCCP Workflow
 

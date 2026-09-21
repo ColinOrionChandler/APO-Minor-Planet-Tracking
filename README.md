@@ -52,6 +52,13 @@ Use half-rate tracking and a seeing estimate for exposure-time guidance:
 python apo_minor_planet_tracking.py "Chandler" --half-rate --seeing 1.2
 ```
 
+Track the sidereal field at the target's queried position instead of applying
+the object's non-sidereal motion:
+
+```console
+python apo_minor_planet_tracking.py "Chandler" --sidereal
+```
+
 Use MPC as the ephemeris provider if Horizons is unavailable:
 
 ```console
@@ -85,6 +92,9 @@ window unless you explicitly need one of the diagnostic lines elsewhere.
 - Apply offsets in TUI after the slew finishes.  Do not encode observing offsets
   in the Python command.
 - Guide normally.  The telescope tracks the object, so field stars will trail.
+- Use `--sidereal` when the field, rather than the moving target, should remain
+  fixed; this emits zero non-sidereal rates.  The target will consequently move
+  through the field at its apparent motion.
 - Nearby or fast-moving targets may need fresh commands during the night.
 - Some Horizons names are ambiguous.  Use the exact disambiguated Horizons name
   when needed, such as `"Didymos (primary body)"`.
