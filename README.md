@@ -16,7 +16,8 @@ tcc track 270.168133497, -22.53122276, 2.8419421296296294e-07, -7.75733024691358
 ## Scripts
 
 - `apo_minor_planet_tracking.py` queries JPL Horizons by default and can query
-  MPC ephemerides with `--provider MPC`.
+  MPC ephemerides with `--provider MPC`, or confirmation-page candidates with
+  `--provider NEOCP` / `--provider PCCP`.
 - `mpc_pccp.py` queries the MPC Possible Comet Confirmation Page (PCCP) for
   objects that may not yet have stable provisional designations.
 
@@ -65,7 +66,21 @@ Use MPC as the ephemeris provider if Horizons is unavailable:
 python apo_minor_planet_tracking.py "Chandler" --provider MPC
 ```
 
-Generate a TCC command for an object listed on the PCCP:
+Generate a TCC command from an MPC NEO Confirmation Page (NEOCP) or Possible
+Comet Confirmation Page (PCCP) designation:
+
+```console
+python apo_minor_planet_tracking.py SWAN26Q --provider PCCP
+python apo_minor_planet_tracking.py SWAN26Q --provider NEOCP --half-rate
+```
+
+Both provider names use the same MPC confirmation service. Supply the exact,
+case-sensitive temporary designation. `--ut`, `--site-code`, elevation limits,
+`--half-rate`, and `--sidereal` work with either name. JPL remains the default;
+use an explicit confirmation provider for these candidates. Candidates must
+still be on the confirmation pages when queried.
+
+The older standalone PCCP helper is also available:
 
 ```console
 python mpc_pccp.py --show-object P12hxMW --obs-code 705
@@ -107,6 +122,7 @@ Run the lightweight syntax check before committing:
 
 ```console
 python -m py_compile apo_minor_planet_tracking.py mpc_pccp.py
+python -m unittest discover -s tests -v
 ```
 
 Live ephemeris checks require network access to JPL Horizons or MPC.

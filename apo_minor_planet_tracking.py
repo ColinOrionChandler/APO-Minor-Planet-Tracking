@@ -20,6 +20,8 @@ from astropy.table import QTable
 from astropy import units as u
 import numpy as np
 
+from mpc_pccp import get_confirmation_ephemeris
+
 
 # APO TCC wants rates in degrees per second; ephemeris providers report the
 # components in arcsec per hour.  3600 arcsec/degree * 3600 seconds/hour gives
@@ -216,14 +218,15 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 	positional uncertainty when Horizons returns a usable uncertainty column.
 
 	Args:
-		objname: JPL Horizons/MPC object name or designation.
+		objname: JPL Horizons/MPC object name or NEOCP/PCCP designation.
 		site_code: Observatory code; APO is MPC site 705.
 		ut: UTC timestamp string or datetime.  If omitted, query now plus
 			``timedelta_s`` seconds so the generated rates are current by the time
 			the command is pasted into TUI.
 		timedelta_s: Offset in seconds used only when ``ut`` is omitted.
 		limits: Optional elevation guardrails.  Use ``None`` or ``{}`` to disable.
-		provider: ``JPL`` for Horizons or ``MPC`` for Minor Planet Center.
+		provider: ``JPL`` for Horizons, ``MPC`` for cataloged objects, or
+			``NEOCP`` / ``PCCP`` for MPC confirmation-page designations.
 		half_rate: Divide both tracking rates by two for half-rate tracking.
 		sidereal: Generate a zero-rate command that tracks the sidereal field at
 			the queried position instead of tracking the moving object.
@@ -234,6 +237,8 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 
 	ut = _coerce_utc_string(ut, timedelta_s=timedelta_s)
 	provider_name = provider.upper()
+	if provider_name not in {'JPL', 'MPC', 'NEOCP', 'PCCP'}:
+		raise ValueError("provider must be 'JPL', 'MPC', 'NEOCP', or 'PCCP'.")
 	if verbose:
 		print(f'Running query for {objname}, site_code={site_code}, ut={ut} UTC, timedelta_s={timedelta_s} now...')
 	#
@@ -292,8 +297,15 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		d['pos_unc_label'] = None
 		d['pos_unc_ra_as'] = None
 		d['pos_unc_dec_as'] = None
-	if provider_name not in {'JPL', 'MPC'}:
-		raise ValueError("provider must be 'JPL' or 'MPC'.")
+	if provider_name in {'NEOCP', 'PCCP'}:
+		row = get_confirmation_ephemeris(objname, site_code=site_code, ut=ut)
+		d.update({
+			'elevation': row['obj_alt_deg'], 'RA': row['ra_deg'], 'DEC': row['dec_deg'],
+			'RA rate': row['dRA'] * 60.0, 'Dec rate': row['dDec'] * 60.0,
+			'mag': row['V'], 'mag_label': 'MPC mag', 'true_anom': None,
+		})
+		print(f'MPC NEOCP/PCCP: {objname} | Ephemeris UTC: {row["datetime_utc"].isoformat()} '
+			  f'| Requested UTC: {ut} (nearest one-minute sample)')
 
 	# Print RA/Dec in HMS/DMS along with rates in arcsec/sec
 	coord = SkyCoord(ra=d['RA'], dec=d['DEC'], unit='deg', frame='icrs')
@@ -339,7 +351,7 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 		print('Brightness / Geometry: not available from this ephemeris source')
 	#
 	total_rate = np.sqrt(d["RA rate"]**2 + d["Dec rate"]**2) / 60 # to "/min"
-	max_exptime = seeing / (total_rate / 60)
+	max_exptime = seeing / (total_rate / 60) if total_rate > 0 else np.inf
 	print(f'Elevation: {round(d["elevation"],2)}°. Pre-half-rate (half_rate={half_rate}) changes are dRA = {round(d["RA rate"]/60,3)} "/min and dDec = {round(d["Dec rate"]/60,3)} "/min.')
 	print(f'Max Exptime = {round(max_exptime,1)} s given the total on-sky motion of {round(total_rate,3)} "/min and {seeing}" seeing.')
 	#
@@ -385,13 +397,13 @@ def make_tcc_command(objname, site_code='705', ut=None, timedelta_s=30, verbose=
 if __name__ == '__main__':
 	import argparse # This is to enable command line arguments.
 	parser = argparse.ArgumentParser(description='Query JPL/MPC ephemerides and print an APO TCC tracking command.')
-	parser.add_argument('objects', nargs='+', help="Minor planets to query.")
+	parser.add_argument('objects', nargs='+', help="Object names or NEOCP/PCCP designations (with the corresponding --provider).")
 	parser.add_argument('--site-code', dest='site_code', type=str, default='705', help='observatory site code. Default: 705 (APO).')
 	parser.add_argument('--ut', dest='ut', type=str, default=None, help=f'UT of format YYYY-MM-DD hh:mm:ss. Default: now.')
 	parser.add_argument('--timedelta', dest='time_delta', type=int, default=30, help=f'How many seconds after the UT to calculate. Used to make ephemeris more current (e.g., it takes time to query JPL, or you are planning for some time in the near future). Default: 30 seconds.')
 	parser.add_argument('--min-elev', dest='min_elev', type=float, default=10, help=f'Minimum elevation of the target. Default: 10°.')
 	parser.add_argument('--max-elev', dest='max_elev', type=float, default=85, help=f'Maximum elevation of the target. Default: 85°.')
-	parser.add_argument('--provider', dest='provider', type=str, default='JPL', help='Ephemeris service to use. Options are JPL or MPC. Default: JPL.')
+	parser.add_argument('--provider', dest='provider', type=str.upper, choices=['JPL', 'MPC', 'NEOCP', 'PCCP'], default='JPL', help='Ephemeris service: JPL (default), MPC, or NEOCP/PCCP for confirmation-page designations such as SWAN26Q.')
 	parser.add_argument('--half-rate', dest='half_rate', action='store_true', help='Use half the tracking rates (RA and Dec).')
 	parser.add_argument('--sidereal', dest='sidereal', action='store_true', help='Track the sidereal field by emitting zero non-sidereal rates.')
 	parser.add_argument('--seeing', dest='seeing', type=float, default=1.0, help='Seeing in arcseconds used to estimate max exposure time. Default: 1.0".')

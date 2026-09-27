@@ -14,8 +14,12 @@ Usage:
 """
 
 import argparse
+import math
+import re
 import sys
 import requests
+from html import unescape
+from urllib.parse import unquote
 from datetime import datetime, timezone
 
 def makeAPOtrackingCommand_pccp(objname, RA, DEC, dRA, dDEC, verbose=False):
@@ -95,9 +99,10 @@ def parse_pccp_html(html_text: str) -> dict:
 
     for line in html_text.splitlines():
         # Start of a new object's block
-        if line.startswith('<p>Get the <a href="http://cgi.minorplanetcenter.net/cgi-bin/showobsorbs.cgi?Obj='):
+        object_match = re.search(r'showobsorbs\.cgi\?Obj=([^&\s\"\'<>]+)', unescape(line))
+        if object_match:
             section = "objname"
-            objname = line.split("Obj=")[-1].split("&")[0]
+            objname = unquote(object_match.group(1))
             objs_lines[objname] = []
             continue
 
@@ -106,7 +111,7 @@ def parse_pccp_html(html_text: str) -> dict:
 
         if section == "objname":
             # Look for the header line starting with "Date"
-            if line.startswith("Date"):
+            if line.lstrip().startswith("Date"):
                 section = "headerrow"
                 objs_lines[objname].append(line.rstrip("\n"))  # header
                 continue
@@ -119,17 +124,8 @@ def parse_pccp_html(html_text: str) -> dict:
             if line.startswith("      "):
                 continue
 
-            # If we encounter the beginning of another object while in headerrow,
-            # treat it as a new object and reset state.
-            if line.startswith('<p>Get the <a href="http://cgi.minorplanetcenter.net/cgi-bin/showobsorbs.cgi?Obj='):
-                section = "objname"
-                objname = line.split("Obj=")[-1].split("&")[0]
-                objs_lines[objname] = []
-                continue
-
             # Drop trailing HTML links (Map/Offsets)
-            if "<a href" in line:
-                line = line.split("<a href")[0]
+            line = re.split(r'<a\s', line, maxsplit=1, flags=re.IGNORECASE)[0]
 
             objs_lines[objname].append(line.rstrip("\n"))
     # print(objs_lines['P12hxMW'])
@@ -149,7 +145,11 @@ def parse_pccp_html(html_text: str) -> dict:
         rows = []
         for ln in data_lines:
             tokens = ln.split()
-            if len(tokens) < 4:
+            # Decimal full-output rows have 16 fields. A blank magnitude must
+            # not shift the rates or altitude into the preceding columns.
+            if len(tokens) == 15 and not ln[45:51].strip():
+                tokens.insert(7, 'nan')
+            if len(tokens) != 16:
                 continue
 
             # First four tokens are YYYY MM DD HHMM
@@ -164,8 +164,11 @@ def parse_pccp_html(html_text: str) -> dict:
             ut_str = tokens[3]
             # Normalize UT like "300" or "0300" -> "0300"
             ut_str = ut_str.zfill(4)
-            hour = int(ut_str[:-2])
-            minute = int(ut_str[-2:])
+            try:
+                hour = int(ut_str[:-2])
+                minute = int(ut_str[-2:])
+            except ValueError:
+                continue
 
             row = {}
 
@@ -223,6 +226,70 @@ def parse_pccp_html(html_text: str) -> dict:
     return tables
 
 
+def get_confirmation_ephemeris(object_name, site_code='705', ut=None):
+    """Get a single NEOCP/PCCP row, within 30 seconds of the requested UTC.
+
+    Both pages use the same confirmation ephemeris service. Request only the
+    exact temporary designation, one-minute sampling, decimal positions (RA
+    in hours), and *sky* motion in arcsec/minute. The caller must apply the RA
+    cos(Dec) correction once when converting to coordinate tracking rates.
+    """
+    from astropy.time import Time
+
+    if not re.fullmatch(r'[A-Za-z0-9]+', object_name):
+        raise ValueError('Supply the exact alphanumeric NEOCP/PCCP designation.')
+    now = datetime.now(timezone.utc)
+    epoch = now if ut is None else Time(ut).to_datetime(timezone=timezone.utc)
+    data = {
+        'W': 'j', 'obj': object_name, 'Parallax': '1', 'obscode': site_code,
+        # The form accepts only integer hours and returns a two-hour window.
+        'int': '3', 'start': str(math.ceil((epoch - now).total_seconds() / 3600)),
+        'raty': 'd', 'mot': 'm', 'dmot': 's', 'out': 'f',
+        'sun': 'x', 'oalt': '-90',
+    }
+    try:
+        response = requests.post(URL, data=data, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        raise ValueError(f'MPC confirmation ephemeris request failed for {object_name}: {exc}') from exc
+    if 'Incorrect Form Entry' in response.text:
+        raise ValueError('MPC rejected the confirmation request; check the observatory code and requested UTC.')
+    tables = parse_pccp_html(response.text)
+    if object_name not in tables:
+        raise ValueError(
+            f'No usable MPC confirmation ephemeris for {object_name}. Check the '
+            'exact, case-sensitive NEOCP/PCCP designation; removed candidates '
+            'must be queried by their assigned designation with JPL or MPC.'
+        )
+    table = tables[object_name].dropna(subset=['datetime_utc'])
+    if table.empty:
+        raise ValueError(f'No valid MPC ephemeris timestamps for {object_name}.')
+    deltas = (table['datetime_utc'] - epoch).abs()
+    index = deltas.idxmin()
+    if deltas.loc[index].total_seconds() > 30:
+        raise ValueError(
+            f'MPC confirmation ephemeris does not cover {epoch.isoformat()} '
+            f'within 30 seconds for {object_name}; refusing a stale tracking command.'
+        )
+    row = table.loc[index].copy()
+    for column in ('ra_deg', 'dec_deg', 'dRA', 'dDec', 'obj_alt_deg'):
+        try:
+            value = float(row[column])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f'Invalid MPC confirmation field {column} for {object_name}.') from exc
+        if not math.isfinite(value):
+            raise ValueError(f'Non-finite MPC confirmation field {column} for {object_name}.')
+        row[column] = value
+    if not (0 <= row['ra_deg'] < 360 and -90 < row['dec_deg'] < 90
+            and -90 <= row['obj_alt_deg'] <= 90):
+        raise ValueError(f'Invalid MPC confirmation coordinates or altitude for {object_name}.')
+    try:
+        row['V'] = float(row['V'])
+    except (KeyError, TypeError, ValueError):
+        row['V'] = float('nan')
+    return row
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Query MPC PCCP ephemerides and generate an APO TCC tracking command."
@@ -273,7 +340,7 @@ def main():
     # request decimal RA/Dec and rates, filter out objects below 20 degrees
     # altitude, and sort by discovery date.
     data = {
-        "W": "a",
+        "W": "j" if args.show_object else "a",
         "mb": "-30",
         "mf": "30",
         "dl": "-90",
@@ -295,6 +362,8 @@ def main():
         "sun": "x",
         "oalt": "20",
     }
+    if args.show_object:
+        data['obj'] = args.show_object
 
     try:
         resp = requests.post(URL, headers=headers, data=data, timeout=30)

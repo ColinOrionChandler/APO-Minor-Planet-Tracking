@@ -67,7 +67,44 @@ printed motion diagnostics describe the object's actual motion before the
 sidereal mode is applied.  `--sidereal` and `--half-rate` cannot be used
 together.
 
-## PCCP Workflow
+## NEOCP / PCCP Workflow
+
+Use an exact temporary designation from the MPC [NEOCP](https://minorplanetcenter.net/iau/NEO/toconfirm_tabular.html)
+or [PCCP](https://minorplanetcenter.net/iau/NEO/pccp_tabular.html) with the main script:
+
+```console
+python apo_minor_planet_tracking.py SWAN26Q --provider PCCP
+python apo_minor_planet_tracking.py SWAN26Q --provider NEOCP --sidereal
+python apo_minor_planet_tracking.py SWAN26Q --provider PCCP --ut "2026-09-27 14:00:00"
+```
+
+`NEOCP` and `PCCP` are aliases for the same confirmation ephemeris service;
+neither needs a Horizons identity or a permanent designation. The exact,
+case-sensitive designation is submitted to MPC. JPL remains the default provider,
+and `MPC` continues to query the ordinary catalog ephemeris service.
+
+The confirmation provider requests one-minute samples for the supplied site and
+selects a row within 30 seconds of the requested UTC (default: now plus 30 seconds).
+It prints both the requested time and the actual sample time; positions are not
+interpolated. MPC accepts integer-hour start offsets, so the script requests a
+window around the desired epoch and checks the returned timestamps. An uncovered
+epoch, missing candidate, or invalid position/rate stops command generation.
+Once a candidate is removed, query its assigned designation using JPL or MPC.
+
+MPC decimal RA is in hours and is converted to degrees. The request uses separate
+**sky-motion** components in arcsec/minute (`dmot=s`, `mot=m`), which are converted
+to arcsec/hour before the main workflow applies its single RA cosine correction.
+MPC altitude filtering is disabled for this query so the main script's configured
+elevation limits apply. Half-rate and sidereal tracking work as usual.
+
+Python callers can use:
+
+```python
+from apo_minor_planet_tracking import make_tcc_command
+command = make_tcc_command('SWAN26Q', provider='PCCP', half_rate=True)
+```
+
+### Standalone PCCP Helper
 
 Use `mpc_pccp.py` for candidates listed on the MPC Possible Comet Confirmation
 Page:
@@ -76,7 +113,7 @@ Page:
 python mpc_pccp.py --show-object P12hxMW --obs-code 705
 ```
 
-The script submits the MPC `confirmeph2.cgi` form, parses each object block,
+The script submits the selected object to the MPC `confirmeph2.cgi` form, parses its block,
 selects the ephemeris row nearest to the current UTC time, and converts MPC
 arcsec/minute rates to the APO TCC degrees/second convention.
 
@@ -108,6 +145,7 @@ Syntax-check the scripts without making network requests:
 
 ```console
 python -m py_compile apo_minor_planet_tracking.py mpc_pccp.py
+python -m unittest discover -s tests -v
 ```
 
 Help output checks import the runtime dependencies but do not query JPL or MPC:
